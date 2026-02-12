@@ -7,10 +7,11 @@ async def send_message():
 
     # JSON bericht dat je wil sturen
     message = {
-        "type": "offer",
+        "type": "topic",
         "from": "client1",
         "data": {
-            "sdp": "voorbeeld SDP string"
+            "name": "topic1",
+            "value": "Any value"
         }
     }
 
