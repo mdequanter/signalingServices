@@ -13,7 +13,7 @@ from std_msgs.msg import String
 class WsToRos2(Node):
     def __init__(self):
         super().__init__("ws_to_ros2_topics")
-        self.publishers = {}  # topic_name -> publisher
+        self._topic_publishers = {}  # topic_name -> publisher  ✅ (rename!)
 
     def publish_dynamic(self, topic_name: str, value: str):
         """
@@ -25,14 +25,14 @@ class WsToRos2(Node):
         else:
             ros_topic = topic_name
 
-        if ros_topic not in self.publishers:
+        if ros_topic not in self._topic_publishers:
             pub = self.create_publisher(String, ros_topic, 10)
-            self.publishers[ros_topic] = pub
+            self._topic_publishers[ros_topic] = pub
             self.get_logger().info(f"📌 Nieuwe ROS2 publisher aangemaakt: {ros_topic} [std_msgs/String]")
 
         msg = String()
         msg.data = str(value)
-        self.publishers[ros_topic].publish(msg)
+        self._topic_publishers[ros_topic].publish(msg)
         self.get_logger().info(f"📤 Gepubliceerd op {ros_topic}: {msg.data}")
 
 
@@ -77,9 +77,6 @@ async def websocket_loop(node: WsToRos2, uri: str):
                 node.get_logger().warning(f"⚠️ 'data.name' ontbreekt in bericht: {data}")
                 continue
 
-            # Belangrijk: publish gebeurt in ROS thread-safe context via rclpy
-            # Hier is dat ok: rclpy is in andere thread aan het spinnen,
-            # publishers zijn thread-safe genoeg voor deze simpele use-case.
             node.publish_dynamic(topic_name, value)
 
 
