@@ -3,7 +3,7 @@ import websockets
 import json
 
 async def send_message():
-    uri = "ws://localhost:9000"   # Pas dit aan als server elders draait
+    uri = "ws://10.147.6.196:9000"   # Pas dit aan als server elders draait
 
     # JSON bericht dat je wil sturen
     message = {
