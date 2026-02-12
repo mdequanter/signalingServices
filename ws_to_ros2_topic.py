@@ -84,7 +84,7 @@ async def websocket_loop(node: WsToRos2, uri: str):
 
 
 def main():
-    uri = "ws://10.147.6.196:9000"
+    uri = "ws://192.168.0.73:9000"
 
     rclpy.init()
     node = WsToRos2()
