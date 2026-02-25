@@ -2,6 +2,7 @@ import asyncio
 import json
 import base64
 import time
+import ssl
 
 import websockets
 import cv2
@@ -9,7 +10,8 @@ import numpy as np
 from ultralytics import YOLO
 
 # --- Minimale vaste instellingen ---
-SIGNALING_SERVER = "ws://192.168.0.74:9000"
+#SIGNALING_SERVER = "ws://192.168.0.74:9000"
+SIGNALING_SERVER = "wss://signaling.ehb.be"
 MODEL_PATH = r"models\unrealsim.pt"
 DETECTION_CONFIDENCE = 0.3
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
@@ -46,7 +48,21 @@ def decode_message_to_frame(msg):
         return None
 
 async def receive_and_infer():
-    async with websockets.connect(SIGNALING_SERVER, max_size=None) as ws:
+    ssl_context = ssl.create_default_context()
+
+    async with websockets.connect(SIGNALING_SERVER,
+        ssl=ssl_context,
+        origin="https://signaling.ehb.be",
+        compression=None,
+        additional_headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            )
+        },
+    ) as ws:
+        print(f" Verbonden met signaling server ({SIGNALING_SERVER})")
         pending_frame_id = None  # als er ooit frame_meta komt, houden we het stil bij
 
         while True:

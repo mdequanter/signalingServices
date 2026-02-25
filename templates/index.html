@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flask + Webcam</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    video, canvas { max-width: 640px; width: 100%; border-radius: 12px; }
+    button { padding: 10px 14px; margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Webcam in de browser</h1>
+
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+
+  <div style="margin-top: 12px;">
+    <button id="start">Start webcam</button>
+    <button id="snap">Neem foto + upload</button>
+  </div>
+
+  <pre id="status"></pre>
+
+  <script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const statusEl = document.getElementById("status");
+    let stream = null;
+
+    document.getElementById("start").onclick = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        statusEl.textContent = "Webcam gestart.";
+      } catch (e) {
+        statusEl.textContent = "Fout: " + e;
+      }
+    };
+
+    document.getElementById("snap").onclick = async () => {
+      if (!stream) {
+        statusEl.textContent = "Start eerst de webcam.";
+        return;
+      }
+
+      // teken huidige frame in canvas
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0);
+
+      // encodeer als JPEG data URL
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+      // stuur naar Flask
+      const resp = await fetch("/upload_frame", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: dataUrl })
+      });
+
+      const json = await resp.json();
+      statusEl.textContent = "Server response: " + JSON.stringify(json, null, 2);
+    };
+  </script>
+</body>
+</html>

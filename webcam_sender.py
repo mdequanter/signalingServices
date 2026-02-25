@@ -2,8 +2,9 @@ import asyncio
 import time
 import cv2
 import websockets
+import ssl
 
-SIGNALING_SERVER = "ws://192.168.0.74:9000"
+SIGNALING_SERVER = "wss://signaling.ehb.be"
 
 TARGET_WIDTH, TARGET_HEIGHT = 640, 480
 FPS = 8
@@ -11,7 +12,8 @@ JPEG_QUALITY = 70
 
 def open_camera_best_effort(max_index=8):
     for idx in range(max_index):
-        cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        #cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if not cap.isOpened():
             cap.release()
             continue
@@ -28,6 +30,7 @@ def open_camera_best_effort(max_index=8):
         t0 = time.time()
         while time.time() - t0 < 1.0:
             ret, frame = cap.read()
+            frame = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT))
             if ret and frame is not None and frame.size > 0:
                 ok = True
                 break
@@ -49,9 +52,25 @@ async def webcam_sender():
     frame_interval = 1.0 / float(FPS)
     next_t = time.time()
 
-    async with websockets.connect(SIGNALING_SERVER, max_size=None) as ws:
+    ssl_context = ssl.create_default_context()
+
+    async with websockets.connect(SIGNALING_SERVER,
+        ssl=ssl_context,
+        origin="https://signaling.ehb.be",
+        compression=None,
+        additional_headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            )
+        },
+    ) as ws:
+
+
         while True:
             ret, frame = cap.read()
+            frame = cv2.resize(frame, (TARGET_WIDTH, TARGET_HEIGHT))
             if not ret or frame is None:
                 await asyncio.sleep(0.05)
                 continue

@@ -1,9 +1,13 @@
 import asyncio
 import websockets
 import json
+import ssl
+
+SIGNALING_SERVER = "wss://signaling.ehb.be"
 
 async def send_message():
-    uri = "ws://192.168.0.73:9000"   # Pas dit aan als server elders draait
+    #uri = "ws://192.168.0.73:9000"   # Pas dit aan als server elders draait
+    uri = SIGNALING_SERVER
 
     # JSON bericht dat je wil sturen
     message = {
@@ -15,10 +19,23 @@ async def send_message():
         }
     }
 
-    print("🔌 Verbinden met signaling server...")
     
-    async with websockets.connect(uri) as websocket:
-        print("✅ Verbonden!")
+
+    ssl_context = ssl.create_default_context()
+    
+    async with websockets.connect(SIGNALING_SERVER,
+            ssl=ssl_context,
+            origin="https://signaling.ehb.be",
+            compression=None,
+            additional_headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/121.0.0.0 Safari/537.36"
+                )
+            },
+        ) as websocket:
+        print(f" Verbonden met signaling server ({SIGNALING_SERVER})")
 
         # Converteer naar JSON-string
         json_message = json.dumps(message)
