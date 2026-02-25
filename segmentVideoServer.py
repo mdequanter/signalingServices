@@ -2,6 +2,8 @@ import asyncio
 import base64
 import json
 import ssl
+import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,9 +12,11 @@ from ultralytics import YOLO
 
 #SIGNALING_SERVER = "ws://192.168.0.74:9000"
 SIGNALING_SERVER = "wss://signaling.ehb.be"
-MODEL_PATH = r"models\unrealsim.pt"
+MODEL_PATH = r"models/unrealsim.pt"
 DETECTION_CONFIDENCE = 0.3
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+RECORDS_DIR = Path("records")
+SAVE_INTERVAL_SEC = 10.0
 
 model = YOLO(MODEL_PATH, verbose=False)
 
@@ -80,6 +84,8 @@ def compute_heading(frame):
 
 async def receive_and_infer():
     ssl_context = ssl.create_default_context()
+    RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    next_save_at = time.time()
 
     async with websockets.connect(
         SIGNALING_SERVER,
@@ -125,6 +131,14 @@ async def receive_and_infer():
 
             if frame is None:
                 continue
+
+            now = time.time()
+            if now >= next_save_at:
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                fid = "none" if frame_id is None else str(frame_id)
+                out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
+                cv2.imwrite(str(out_path), frame)
+                next_save_at = now + SAVE_INTERVAL_SEC
 
             heading = compute_heading(frame)
             await ws.send(
