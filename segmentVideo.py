@@ -3,6 +3,7 @@ import json
 import base64
 import time
 import ssl
+from pathlib import Path
 
 import websockets
 import cv2
@@ -15,6 +16,8 @@ SIGNALING_SERVER = "wss://signaling.ehb.be"
 MODEL_PATH = r"models\unrealsim.pt"
 DETECTION_CONFIDENCE = 0.3
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+RECORDS_DIR = Path("records")
+SAVE_INTERVAL_SEC = 10.0
 
 model = YOLO(MODEL_PATH, verbose=False)
 
@@ -49,6 +52,8 @@ def decode_message_to_frame(msg):
 
 async def receive_and_infer():
     ssl_context = ssl.create_default_context()
+    RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    next_save_at = time.time()
 
     async with websockets.connect(SIGNALING_SERVER,
         ssl=ssl_context,
@@ -157,6 +162,14 @@ async def receive_and_infer():
             cv2.imshow("Segmentation + Heading", overlay)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+
+            now = time.time()
+            if now >= next_save_at:
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                fid = "none" if frame_id is None else str(frame_id)
+                out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
+                cv2.imwrite(str(out_path), overlay)
+                next_save_at = now + SAVE_INTERVAL_SEC
 
             await ws.send(json.dumps({"heading": round(direction_angle, 2), "frame_id": frame_id}))
 
