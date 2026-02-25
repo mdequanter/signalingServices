@@ -13,7 +13,7 @@ from ultralytics import YOLO
 # --- Minimale vaste instellingen ---
 #SIGNALING_SERVER = "ws://192.168.0.74:9000"
 SIGNALING_SERVER = "wss://signaling.ehb.be"
-MODEL_PATH = r"models\unrealsim.pt"
+MODEL_PATH = r"models/unrealsim.pt"
 DETECTION_CONFIDENCE = 0.3
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 RECORDS_DIR = Path("records")
