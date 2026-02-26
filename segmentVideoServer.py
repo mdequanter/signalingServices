@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import csv
 import json
 import ssl
 import time
@@ -16,6 +17,7 @@ MODEL_PATH = r"models/unrealsim.pt"
 DETECTION_CONFIDENCE = 0.6
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 RECORDS_DIR = Path("records")
+CSV_PATH = RECORDS_DIR / "inference_log.csv"
 SAVE_INTERVAL_SEC = 10.0
 
 model = YOLO(MODEL_PATH, verbose=False)
@@ -85,6 +87,22 @@ def compute_heading(frame):
 async def receive_and_infer():
     ssl_context = ssl.create_default_context()
     RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    csv_exists = CSV_PATH.exists()
+    with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
+        csv_writer = csv.writer(csv_file)
+        if not csv_exists or CSV_PATH.stat().st_size == 0:
+            csv_writer.writerow(
+                [
+                    "Filename",
+                    "frame_id",
+                    "longitude",
+                    "latitude",
+                    "heading",
+                    "MODEL_PATH",
+                    "lastlatency",
+                ]
+            )
+
     next_save_at = time.time()
 
     async with websockets.connect(
@@ -101,17 +119,22 @@ async def receive_and_infer():
         },
     ) as ws:
         print(f"Verbonden met signaling server ({SIGNALING_SERVER})")
-        pending_frame_id = None
+        pending_frame_meta = {}
 
         while True:
             msg = await ws.recv()
-            frame_id = None
+            frame_meta = {}
 
             if isinstance(msg, str):
                 try:
                     payload = json.loads(msg)
                     if payload.get("type") == "frame_meta":
-                        pending_frame_id = payload.get("frame_id")
+                        pending_frame_meta = {
+                            "frame_id": payload.get("frame_id"),
+                            "longitude": payload.get("longitude"),
+                            "latitude": payload.get("latitude"),
+                            "lastlatency": payload.get("lastlatency"),
+                        }
                         continue
                 except json.JSONDecodeError:
                     pass
@@ -119,28 +142,55 @@ async def receive_and_infer():
             frame = decode_message_to_frame(msg)
 
             if isinstance(msg, (bytes, bytearray)):
-                frame_id = pending_frame_id
-                pending_frame_id = None
+                frame_meta = pending_frame_meta
+                pending_frame_meta = {}
             elif isinstance(msg, str):
                 try:
                     payload = json.loads(msg)
-                    frame_id = payload.get("frame_id", pending_frame_id)
+                    frame_meta = {
+                        "frame_id": payload.get("frame_id", pending_frame_meta.get("frame_id")),
+                        "longitude": payload.get("longitude", pending_frame_meta.get("longitude")),
+                        "latitude": payload.get("latitude", pending_frame_meta.get("latitude")),
+                        "lastlatency": payload.get("lastlatency", pending_frame_meta.get("lastlatency")),
+                    }
                 except Exception:
-                    frame_id = pending_frame_id
-                pending_frame_id = None
+                    frame_meta = pending_frame_meta
+                pending_frame_meta = {}
 
             if frame is None:
                 continue
 
+            frame_id = frame_meta.get("frame_id")
+            longitude = frame_meta.get("longitude")
+            latitude = frame_meta.get("latitude")
+            lastlatency = frame_meta.get("lastlatency")
+
+            saved_filename = ""
             now = time.time()
             if now >= next_save_at:
                 ts = time.strftime("%Y%m%d_%H%M%S")
                 fid = "none" if frame_id is None else str(frame_id)
                 out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
                 cv2.imwrite(str(out_path), frame)
+                saved_filename = out_path.name
                 next_save_at = now + SAVE_INTERVAL_SEC
 
             heading = compute_heading(frame)
+
+            with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
+                csv_writer = csv.writer(csv_file)
+                csv_writer.writerow(
+                    [
+                        saved_filename,
+                        frame_id,
+                        longitude,
+                        latitude,
+                        round(heading, 2),
+                        MODEL_PATH,
+                        lastlatency,
+                    ]
+                )
+
             await ws.send(
                 json.dumps(
                     {

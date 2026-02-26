@@ -8,27 +8,34 @@
   <title>Webcam → WebSocket Sender</title>
   <style>
     html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui}
-    .wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+    .wrap{position:relative;z-index:2;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;box-sizing:border-box}
     .big{font-size:28px;font-weight:700}
     .row{opacity:.9}
     .compassWrap{display:flex;flex-direction:column;align-items:center;gap:6px}
     #compass{width:140px;height:140px;display:block}
+    .panel{background:rgba(0,0,0,.45);backdrop-filter:blur(3px);padding:14px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.15);display:flex;flex-direction:column;align-items:center;gap:10px}
+    .controls{display:flex;gap:10px}
     button{padding:10px 14px;border-radius:10px;border:0;background:#222;color:#fff;font-size:14px}
-    video{display:none;} /* geen rendering op device */
-    canvas{display:none;}
+    #video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000}
+    #cap{display:none;}
   </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="big" id="status">Idle</div>
-  <div class="row">Sent: <span id="sent">0</span> frames <span id="kbps">0</span> kbps</div>
-  <div class="row">Errors: <span id="errs">0</span></div>
-  <div class="row">Latency: <span id="latency">--</span> ms</div>
-  <div class="compassWrap">
-    <canvas id="compass" width="140" height="140"></canvas>
-    <div class="row">Heading: <span id="heading">--</span>&deg;</div>
+  <div class="panel">
+    <div class="big" id="status">Idle</div>
+    <div class="row">Sent: <span id="sent">0</span> frames <span id="kbps">0</span> kbps</div>
+    <div class="row">Errors: <span id="errs">0</span></div>
+    <div class="row">Latency: <span id="latency">--</span> ms</div>
+    <div class="compassWrap">
+      <canvas id="compass" width="140" height="140"></canvas>
+      <div class="row">Heading: <span id="heading">--</span>&deg;</div>
+    </div>
+    <div class="controls">
+      <button id="btn">Start</button>
+      <button id="switchCam" disabled>Switch Camera</button>
+    </div>
   </div>
-  <button id="btn">Start</button>
 </div>
 
 <video id="video" autoplay playsinline></video>
@@ -50,6 +57,7 @@
   const latencyEl = document.getElementById("latency");
   const headingEl = document.getElementById("heading");
   const btn = document.getElementById("btn");
+  const switchCamBtn = document.getElementById("switchCam");
 
   const video = document.getElementById("video");
   const cap = document.getElementById("cap");
@@ -59,6 +67,8 @@
 
   let ws = null;
   let stream = null;
+  let activeVideoDeviceId = null;
+  let availableVideoInputs = [];
   let timer = null;
   let sentFrames = 0;
   let errors = 0;
@@ -189,21 +199,49 @@
     errsEl.textContent = String(errors);
   }
 
+  async function refreshVideoInputs() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    availableVideoInputs = devices.filter(d => d.kind === "videoinput");
+    switchCamBtn.disabled = availableVideoInputs.length < 2 || !stream;
+  }
+
+  async function startCamera(preferredDeviceId = null) {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+
+    const videoConstraints = preferredDeviceId
+      ? {
+          deviceId: { exact: preferredDeviceId },
+          width: { ideal: TARGET_W },
+          height: { ideal: TARGET_H }
+        }
+      : {
+          width: { ideal: TARGET_W },
+          height: { ideal: TARGET_H },
+          facingMode: "environment"
+        };
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraints,
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    const track = stream.getVideoTracks()[0];
+    activeVideoDeviceId = track?.getSettings?.().deviceId ?? null;
+    await refreshVideoInputs();
+  }
+
   async function start() {
     btn.disabled = true;
     setStatus("Requesting camera");
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: TARGET_W },
-          height:{ ideal: TARGET_H },
-          facingMode: "environment"
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      await video.play();
+      await startCamera(activeVideoDeviceId);
     } catch (e) {
       incErr();
       setStatus("Camera error");
@@ -312,6 +350,7 @@
       stream.getTracks().forEach(t => t.stop());
       stream = null;
     }
+    switchCamBtn.disabled = true;
     sentAtByFrameId.clear();
     nextFrameId = 1;
 
@@ -380,6 +419,34 @@
     } else {
       btn.textContent = "Stop";
       start();
+    }
+  });
+
+  switchCamBtn.addEventListener("click", async () => {
+    if (!stream) {
+      setStatus("Start eerst");
+      return;
+    }
+
+    try {
+      await refreshVideoInputs();
+      if (availableVideoInputs.length < 2) {
+        setStatus("Geen extra camera gevonden");
+        return;
+      }
+
+      let idx = availableVideoInputs.findIndex(d => d.deviceId === activeVideoDeviceId);
+      if (idx < 0) idx = 0;
+      const next = availableVideoInputs[(idx + 1) % availableVideoInputs.length];
+      await startCamera(next.deviceId);
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        setStatus("Streaming");
+      }
+    } catch (e) {
+      incErr();
+      console.error("Camera switch error", e);
+      setStatus("Camera switch error");
     }
   });
 
