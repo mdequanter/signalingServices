@@ -94,6 +94,7 @@ async def receive_and_infer():
             csv_writer.writerow(
                 [
                     "Filename",
+                    "datetime",
                     "frame_id",
                     "longitude",
                     "latitude",
@@ -170,6 +171,7 @@ async def receive_and_infer():
             out_path = None
             if now >= next_save_at:
                 ts = time.strftime("%Y%m%d_%H%M%S")
+                saved_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 fid = "none" if frame_id is None else str(frame_id)
                 out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
                 cv2.imwrite(str(out_path), frame)
@@ -184,6 +186,7 @@ async def receive_and_infer():
                     csv_writer.writerow(
                         [
                             out_path.name,
+                            saved_at,
                             frame_id,
                             longitude,
                             latitude,
