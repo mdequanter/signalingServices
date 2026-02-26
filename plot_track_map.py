@@ -35,22 +35,47 @@ def resolve_csv_path(base_dir: Path, record_set: str) -> Path:
 def load_points(csv_path: Path):
     points = []
     with csv_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.reader(f)
+        header = next(reader, [])
+        normalized_header = [h.strip() for h in header]
+        has_frame_id_header = "frame_id" in normalized_header
+
         for row in reader:
-            lat = parse_float(row.get("latitude"))
-            lon = parse_float(row.get("longitude"))
+            if not row:
+                continue
+
+            values = [v.strip() for v in row]
+
+            # Supported formats:
+            # 1) Filename,datetime,frame_id,longitude,latitude,heading,MODEL_PATH,lastlatency
+            # 2) Filename,datetime,longitude,latitude,heading,MODEL_PATH,lastlatency
+            if has_frame_id_header:
+                if len(values) < 8:
+                    continue
+                filename, dt, frame_id, lon_s, lat_s, heading, model_path, latency = values[:8]
+            else:
+                if len(values) >= 8:
+                    filename, dt, frame_id, lon_s, lat_s, heading, model_path, latency = values[:8]
+                elif len(values) >= 7:
+                    filename, dt, lon_s, lat_s, heading, model_path, latency = values[:7]
+                    frame_id = ""
+                else:
+                    continue
+
+            lat = parse_float(lat_s)
+            lon = parse_float(lon_s)
             if lat is None or lon is None:
                 continue
 
             point = {
                 "lat": lat,
                 "lon": lon,
-                "filename": (row.get("Filename") or "").strip(),
-                "frame_id": (row.get("frame_id") or "").strip(),
-                "heading": (row.get("heading") or "").strip(),
-                "model_path": (row.get("MODEL_PATH") or "").strip(),
-                "lastlatency": (row.get("lastlatency") or "").strip(),
-                "datetime": (row.get("datetime") or "").strip(),
+                "filename": filename,
+                "frame_id": frame_id,
+                "heading": heading,
+                "model_path": model_path,
+                "lastlatency": latency,
+                "datetime": dt,
             }
             points.append(point)
     return points
