@@ -165,31 +165,33 @@ async def receive_and_infer():
             latitude = frame_meta.get("latitude")
             lastlatency = frame_meta.get("lastlatency")
 
-            saved_filename = ""
             now = time.time()
+            saved_this_frame = False
+            out_path = None
             if now >= next_save_at:
                 ts = time.strftime("%Y%m%d_%H%M%S")
                 fid = "none" if frame_id is None else str(frame_id)
                 out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
                 cv2.imwrite(str(out_path), frame)
-                saved_filename = out_path.name
                 next_save_at = now + SAVE_INTERVAL_SEC
+                saved_this_frame = True
 
             heading = compute_heading(frame)
 
-            with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
-                csv_writer = csv.writer(csv_file)
-                csv_writer.writerow(
-                    [
-                        saved_filename,
-                        frame_id,
-                        longitude,
-                        latitude,
-                        round(heading, 2),
-                        MODEL_PATH,
-                        lastlatency,
-                    ]
-                )
+            if saved_this_frame and out_path is not None:
+                with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
+                    csv_writer = csv.writer(csv_file)
+                    csv_writer.writerow(
+                        [
+                            out_path.name,
+                            frame_id,
+                            longitude,
+                            latitude,
+                            round(heading, 2),
+                            MODEL_PATH,
+                            lastlatency,
+                        ]
+                    )
 
             await ws.send(
                 json.dumps(
