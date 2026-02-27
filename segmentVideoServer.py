@@ -89,6 +89,8 @@ def compute_heading(frame, model=1):
         model = model1
 
 
+    print (f"Running inference with model {model.model[-1].model[-1].yaml['name']} at confidence {DETECTION_CONFIDENCE}")
+
     results = model(frame, conf=DETECTION_CONFIDENCE, verbose=False)
 
     midpoints = []
