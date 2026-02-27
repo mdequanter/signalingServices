@@ -15,6 +15,7 @@ from ultralytics import YOLO
 SIGNALING_SERVER = "wss://signaling.ehb.be"
 MODEL_PATH1 = r"models/unrealsim.pt"
 MODEL_PATH2 = r"models/laerbeekbos.pt"
+MODEL_PATH3 = r"models/kaai.pt"  # Placeholder voor een mogelijke derde model
 DETECTION_CONFIDENCE = 0.6
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 RECORDS_DIR = Path("records")
@@ -23,6 +24,7 @@ SAVE_INTERVAL_SEC = 10.0
 
 model1 = YOLO(MODEL_PATH1, verbose=False)
 model2 = YOLO(MODEL_PATH2, verbose=False)
+model3 = YOLO(MODEL_PATH3, verbose=False)  # Placeholder for potential derde model
 
 
 def parse_detection_confidence(payload, fallback):
@@ -85,6 +87,8 @@ def compute_heading(frame, model=1):
     
     if model == "2":
         model = model2
+    elif model == "3":
+        model = model3
     else:
         model = model1
 
@@ -240,6 +244,8 @@ async def receive_and_infer():
 
             if (lastmodel == "2"):
                 model_path = MODEL_PATH2
+            elif (lastmodel == "3"):
+                model_path = MODEL_PATH3
             else:
                 model_path = MODEL_PATH1
 
