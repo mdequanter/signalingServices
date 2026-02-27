@@ -54,7 +54,7 @@ def decode_message_to_frame(msg):
 def compute_heading(frame, model=1):
     h, w = frame.shape[:2]
     
-    if model == 2:
+    if model == "2":
         model = model2
     else:
         model = model1
@@ -198,7 +198,7 @@ async def receive_and_infer():
 
             heading = compute_heading(frame, model=lastmodel)
 
-            if (lastmodel == 2):
+            if (lastmodel == "2"):
                 model_path = MODEL_PATH2
             else:
                 model_path = MODEL_PATH1
