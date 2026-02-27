@@ -97,7 +97,7 @@ async def receive_and_infer():
     RECORDS_DIR.mkdir(parents=True, exist_ok=True)
     csv_exists = CSV_PATH.exists()
     with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
-        csv_writer = csv.writer(csv_file)
+        csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
         if not csv_exists or CSV_PATH.stat().st_size == 0:
             csv_writer.writerow(
                 [
