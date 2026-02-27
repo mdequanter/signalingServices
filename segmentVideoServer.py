@@ -13,15 +13,16 @@ from ultralytics import YOLO
 
 #SIGNALING_SERVER = "ws://192.168.0.74:9000"
 SIGNALING_SERVER = "wss://signaling.ehb.be"
-MODEL_PATH = r"models/unrealsim.pt"
+MODEL_PATH1 = r"models/unrealsim.pt"
+MODEL_PATH2 = r"models/laerbeekbos.pt"
 DETECTION_CONFIDENCE = 0.6
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 RECORDS_DIR = Path("records")
 CSV_PATH = RECORDS_DIR / "inference_log.csv"
 SAVE_INTERVAL_SEC = 10.0
 
-model = YOLO(MODEL_PATH, verbose=False)
-
+model1 = YOLO(MODEL_PATH1, verbose=False)
+model2 = YOLO(MODEL_PATH2, verbose=False)
 
 def decode_message_to_frame(msg):
     """
@@ -50,8 +51,15 @@ def decode_message_to_frame(msg):
         return None
 
 
-def compute_heading(frame):
+def compute_heading(frame, model=1):
     h, w = frame.shape[:2]
+    
+    if model == 2:
+        model = model2
+    else:
+        model = model1
+
+
     results = model(frame, conf=DETECTION_CONFIDENCE, verbose=False)
 
     midpoints = []
@@ -153,6 +161,7 @@ async def receive_and_infer():
                         "longitude": payload.get("longitude", pending_frame_meta.get("longitude")),
                         "latitude": payload.get("latitude", pending_frame_meta.get("latitude")),
                         "lastlatency": payload.get("lastlatency", pending_frame_meta.get("lastlatency")),
+                        "model": payload.get("model", pending_frame_meta.get("model")),
                     }
                 except Exception:
                     frame_meta = pending_frame_meta
@@ -165,6 +174,7 @@ async def receive_and_infer():
             longitude = frame_meta.get("longitude")
             latitude = frame_meta.get("latitude")
             lastlatency = frame_meta.get("lastlatency")
+            lastmodel = frame_meta.get("model", 1)
 
             now = time.time()
             saved_this_frame = False
@@ -178,7 +188,12 @@ async def receive_and_infer():
                 next_save_at = now + SAVE_INTERVAL_SEC
                 saved_this_frame = True
 
-            heading = compute_heading(frame)
+            heading = compute_heading(frame, model=lastmodel)
+
+            if (lastmodel == 2):
+                model_path = MODEL_PATH2
+            else:
+                model_path = MODEL_PATH1
 
             if saved_this_frame and out_path is not None:
                 with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
@@ -191,7 +206,7 @@ async def receive_and_infer():
                             longitude,
                             latitude,
                             round(heading, 2),
-                            MODEL_PATH,
+                            model_path,
                             lastlatency,
                         ]
                     )
