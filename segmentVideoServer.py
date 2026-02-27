@@ -205,7 +205,7 @@ async def receive_and_infer():
 
             if saved_this_frame and out_path is not None:
                 with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
-                    csv_writer = csv.writer(csv_file)
+                    csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
                     csv_writer.writerow(
                         [
                             out_path.name,
