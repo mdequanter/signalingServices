@@ -24,6 +24,35 @@ SAVE_INTERVAL_SEC = 10.0
 model1 = YOLO(MODEL_PATH1, verbose=False)
 model2 = YOLO(MODEL_PATH2, verbose=False)
 
+
+def parse_detection_confidence(payload, fallback):
+    if not isinstance(payload, dict):
+        return fallback
+
+    raw_value = (
+        payload.get("DETECTION_CONFIDENCE")
+        if payload.get("DETECTION_CONFIDENCE") is not None
+        else payload.get("detection_confidence")
+    )
+    if raw_value is None:
+        raw_value = payload.get("confidence")
+    if raw_value is None:
+        raw_value = payload.get("conficence")
+
+    if raw_value is None:
+        return fallback
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        return fallback
+
+    if parsed < 0.0:
+        return 0.0
+    if parsed > 1.0:
+        return 1.0
+    return parsed
+
 def decode_message_to_frame(msg):
     """
     msg kan bytes (raw JPEG) of str (JSON met base64 JPEG) zijn.
@@ -93,6 +122,7 @@ def compute_heading(frame, model=1):
 
 
 async def receive_and_infer():
+    global DETECTION_CONFIDENCE
     ssl_context = ssl.create_default_context()
     RECORDS_DIR.mkdir(parents=True, exist_ok=True)
     csv_exists = CSV_PATH.exists()
@@ -110,6 +140,7 @@ async def receive_and_infer():
                     "MODEL_PATH",
                     "lastlatency",
                     "sessionId",
+                    "detection_confidence",
                 ]
             )
 
@@ -139,6 +170,7 @@ async def receive_and_infer():
                 try:
                     payload = json.loads(msg)
                     if payload.get("type") == "frame_meta":
+                        DETECTION_CONFIDENCE = parse_detection_confidence(payload, DETECTION_CONFIDENCE)
                         pending_frame_meta = {
                             "frame_id": payload.get("frame_id"),
                             "longitude": payload.get("longitude"),
@@ -146,6 +178,7 @@ async def receive_and_infer():
                             "lastlatency": payload.get("lastlatency"),
                             "model": payload.get("model"),
                             "sessionId": payload.get("sessionId"),
+                            "detection_confidence": DETECTION_CONFIDENCE,
                         }
                         continue
                 except json.JSONDecodeError:
@@ -166,6 +199,10 @@ async def receive_and_infer():
                         "lastlatency": payload.get("lastlatency", pending_frame_meta.get("lastlatency")),
                         "model": payload.get("model", pending_frame_meta.get("model")),
                         "sessionId": payload.get("sessionId", pending_frame_meta.get("sessionId")),
+                        "detection_confidence": parse_detection_confidence(
+                            payload,
+                            pending_frame_meta.get("detection_confidence", DETECTION_CONFIDENCE),
+                        ),
                     }
                 except Exception:
                     frame_meta = pending_frame_meta
@@ -180,6 +217,7 @@ async def receive_and_infer():
             lastlatency = frame_meta.get("lastlatency")
             lastmodel = frame_meta.get("model")
             sessionId = frame_meta.get("sessionId")
+            DETECTION_CONFIDENCE = frame_meta.get("detection_confidence", DETECTION_CONFIDENCE)
 
             now = time.time()
             saved_this_frame = False
@@ -217,6 +255,7 @@ async def receive_and_infer():
                             model_path,
                             lastlatency,
                             sessionId,
+                            DETECTION_CONFIDENCE,
                         ]
                     )
 
