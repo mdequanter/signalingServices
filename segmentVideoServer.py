@@ -109,6 +109,7 @@ async def receive_and_infer():
                     "heading",
                     "MODEL_PATH",
                     "lastlatency",
+                    "sessionId",
                 ]
             )
 
