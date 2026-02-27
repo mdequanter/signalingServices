@@ -144,6 +144,7 @@ async def receive_and_infer():
                             "latitude": payload.get("latitude"),
                             "lastlatency": payload.get("lastlatency"),
                             "model": payload.get("model"),
+                            "sessionId": payload.get("sessionId"),
                         }
                         continue
                 except json.JSONDecodeError:
@@ -163,6 +164,7 @@ async def receive_and_infer():
                         "latitude": payload.get("latitude", pending_frame_meta.get("latitude")),
                         "lastlatency": payload.get("lastlatency", pending_frame_meta.get("lastlatency")),
                         "model": payload.get("model", pending_frame_meta.get("model")),
+                        "sessionId": payload.get("sessionId", pending_frame_meta.get("sessionId")),
                     }
                 except Exception:
                     frame_meta = pending_frame_meta
@@ -176,6 +178,7 @@ async def receive_and_infer():
             latitude = frame_meta.get("latitude")
             lastlatency = frame_meta.get("lastlatency")
             lastmodel = frame_meta.get("model")
+            sessionId = frame_meta.get("sessionId")
 
             now = time.time()
             saved_this_frame = False
@@ -212,6 +215,7 @@ async def receive_and_infer():
                             round(heading, 2),
                             model_path,
                             lastlatency,
+                            sessionId,
                         ]
                     )
 
@@ -220,6 +224,7 @@ async def receive_and_infer():
                     {
                         "heading": round(heading, 2),
                         "frame_id": frame_id,
+                        "sessionId": sessionId,
                     }
                 )
             )
