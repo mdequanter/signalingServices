@@ -20,7 +20,7 @@ DETECTION_CONFIDENCE = 0.6
 SCAN_HEIGHTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 RECORDS_DIR = Path("records")
 CSV_PATH = RECORDS_DIR / "inference_log.csv"
-SAVE_INTERVAL_SEC = 10.0
+SAVE_INTERVAL_SEC = 5.0
 
 model1 = YOLO(MODEL_PATH1, verbose=False)
 model2 = YOLO(MODEL_PATH2, verbose=False)
