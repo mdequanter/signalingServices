@@ -89,7 +89,7 @@ def compute_heading(frame, model=1):
         model = model1
 
 
-    print (f"Running inference with model {model} confidence {DETECTION_CONFIDENCE}")
+    print (f"Running inference with confidence {DETECTION_CONFIDENCE}")
 
     results = model(frame, conf=DETECTION_CONFIDENCE, verbose=False)
 
