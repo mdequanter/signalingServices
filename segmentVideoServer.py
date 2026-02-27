@@ -143,6 +143,7 @@ async def receive_and_infer():
                             "longitude": payload.get("longitude"),
                             "latitude": payload.get("latitude"),
                             "lastlatency": payload.get("lastlatency"),
+                            "model": payload.get("model"),
                         }
                         continue
                 except json.JSONDecodeError:
@@ -174,7 +175,7 @@ async def receive_and_infer():
             longitude = frame_meta.get("longitude")
             latitude = frame_meta.get("latitude")
             lastlatency = frame_meta.get("lastlatency")
-            lastmodel = frame_meta.get("model", 1)
+            lastmodel = frame_meta.get("model")
 
             now = time.time()
             saved_this_frame = False
