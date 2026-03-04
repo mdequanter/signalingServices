@@ -1,54 +1,59 @@
-import asyncio
-import websockets
+﻿import asyncio
 import json
 import ssl
+import websockets
+import secrets
+import time
 
-SIGNALING_SERVER = "wss://signaling.ehb.be"
+ROOM = "/ws/pathnavigation"
+SIGNALING_SERVER = f"ws://localhost:9000{ROOM}"
+#SIGNALING_SERVER = f"wss://signaling.ehb.be{ROOM}"
+SESSION_ID = "demo-session-001"
+
+#BEARER_TOKEN = secrets.token_urlsafe(32) ; print(BEARER_TOKEN) # Generate a new bearer token
+
+BEARER_TOKEN = "LTddk_ptxQX-omdw5B5rfpniA2wB-19KBxFaKuODMzw"
 
 async def send_message():
-    #uri = "ws://192.168.0.73:9000"   # Pas dit aan als server elders draait
-    uri = SIGNALING_SERVER
 
-    # JSON bericht dat je wil sturen
     message = {
+        "sessionId": SESSION_ID,
         "type": "topic",
         "from": "client1",
+        "to": "receiver1", # or "all"
         "data": {
             "name": "topic1",
-            "value": "Any value"
+            "value": time.time()
         }
     }
 
-    
+    ssl_context = None
+    #ssl_context = ssl.create_default_context() # Uncomment if using wss://
 
-    ssl_context = ssl.create_default_context()
-    
-    async with websockets.connect(SIGNALING_SERVER,
-            ssl=ssl_context,
-            origin="https://signaling.ehb.be",
-            compression=None,
-            additional_headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/121.0.0.0 Safari/537.36"
-                )
-            },
-        ) as websocket:
-        print(f" Verbonden met signaling server ({SIGNALING_SERVER})")
 
-        # Converteer naar JSON-string
-        json_message = json.dumps(message)
+    uri = SIGNALING_SERVER  # Zelfde server als sender
+    async with websockets.connect(uri,
+        ssl=ssl_context,   # Uncomment if using wss://
+        origin="http://localhost",
+        compression=None,
+        additional_headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "Authorization": f"Bearer {BEARER_TOKEN}"
+        },
+    ) as websocket:
 
-        print("📤 Bericht versturen:", json_message)
+        print("Connected")
 
-        # Verstuur bericht
-        await websocket.send(json_message)
+        await websocket.send(json.dumps(message))
+        print("Message sent")
 
-        print("✅ Bericht verzonden!")
+        # wacht op antwoorden
+        #async for msg in websocket:
+        #    print("Received:", msg)
 
-        # Optioneel: wachten op antwoord
-        # response = await websocket.recv()
-        # print("📩 Antwoord ontvangen:", response)
 
 asyncio.run(send_message())

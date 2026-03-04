@@ -2,46 +2,95 @@ import asyncio
 import websockets
 import json
 import ssl
+import argparse
 
-async def receive_messages():
-    uri = "wss://signaling.ehb.be"   # Zelfde server als sender
 
-    print("🔌 Verbinden met signaling server...")
+DEFAULT_SERVER = "ws://localhost:9000"
+DEFAULT_ROOM = "/ws/pathnavigation"
+DEFAULT_TOKEN = "B6zifTK3JWeH6E2tThPKLMwxt0QdqXVJ76GHfq7kTvs"
 
-    ssl_context = ssl.create_default_context()
 
-    async with websockets.connect(uri,
+async def receive_messages(server, room, token, use_tls):
+
+    uri = server.rstrip("/") + room
+
+    print("🔌 Connecting to signaling server...")
+    print("Server :", server)
+    print("Room   :", room)
+
+    ssl_context = None
+    if use_tls:
+        ssl_context = ssl.create_default_context()
+
+    async with websockets.connect(
+        uri,
         ssl=ssl_context,
-        origin="https://signaling.ehb.be",
+        origin="http://localhost",
         compression=None,
         additional_headers={
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/121.0.0.0 Safari/537.36"
-            )
+            ),
+            "Authorization": f"Bearer {token}"
         },
     ) as websocket:
-        print(f" Verbonden met signaling server ({uri})")
+
+        print(f"✅ Connected to signaling server ({uri})")
 
         while True:
             try:
                 message = await websocket.recv()
-                print("📩 Ruw bericht ontvangen:", message)
+                print("📩 Raw message received:", message)
 
-                # JSON parsen
                 data = json.loads(message)
 
-                print("📦 Geparsed JSON:")
+                print("📦 Parsed JSON:")
                 print("   Type :", data.get("type"))
                 print("   From :", data.get("from"))
                 print("   Data :", data.get("data"))
                 print("-" * 40)
 
             except websockets.exceptions.ConnectionClosed:
-                print("⚠ Verbinding met server verbroken.")
+                print("⚠ Connection to server closed.")
                 break
             except json.JSONDecodeError:
-                print("❌ Kon JSON niet parsen.")
+                print("❌ Could not parse JSON message.")
 
-asyncio.run(receive_messages())
+
+def main():
+
+    parser = argparse.ArgumentParser(description="WebSocket signaling receiver")
+
+    parser.add_argument(
+        "--server",
+        default=DEFAULT_SERVER,
+        help=f"Signaling server (default: {DEFAULT_SERVER})"
+    )
+
+    parser.add_argument(
+        "--room",
+        default=DEFAULT_ROOM,
+        help=f"Room path (default: {DEFAULT_ROOM})"
+    )
+
+    parser.add_argument(
+        "--token",
+        default=DEFAULT_TOKEN,
+        help="Bearer token"
+    )
+
+    parser.add_argument(
+        "--tls",
+        action="store_true",
+        help="Enable TLS (for wss://)"
+    )
+
+    args = parser.parse_args()
+
+    asyncio.run(receive_messages(args.server, args.room, args.token, args.tls))
+
+
+if __name__ == "__main__":
+    main()
