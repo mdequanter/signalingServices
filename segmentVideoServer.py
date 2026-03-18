@@ -153,7 +153,7 @@ async def receive_and_infer():
 
     next_save_at = time.time()
 
-    async with websockets.connect(uri,
+    async with websockets.connect(SIGNALING_SERVER,
         ssl=ssl_context,   # Uncomment if using wss://
         origin="http://localhost",
         compression=None,
