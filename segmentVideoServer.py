@@ -13,6 +13,7 @@ from ultralytics import YOLO
 
 #SIGNALING_SERVER = "ws://192.168.0.74:9000"
 SIGNALING_SERVER = "wss://signaling.ehb.be"
+BEARER_TOKEN = "LTddk_ptxQX-omdw5B5rfpniA2wB-19KBxFaKuODMzw"
 MODEL_PATH1 = r"models/unrealsim.pt"
 MODEL_PATH2 = r"models/laerbeekbos.pt"
 MODEL_PATH3 = r"models/kaai.pt"  # Placeholder voor een mogelijke derde model
@@ -152,17 +153,17 @@ async def receive_and_infer():
 
     next_save_at = time.time()
 
-    async with websockets.connect(
-        SIGNALING_SERVER,
-        ssl=ssl_context,
-        origin="https://signaling.ehb.be",
+    async with websockets.connect(uri,
+        ssl=ssl_context,   # Uncomment if using wss://
+        origin="http://localhost",
         compression=None,
         additional_headers={
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/121.0.0.0 Safari/537.36"
-            )
+            ),
+            "Authorization": f"Bearer {BEARER_TOKEN}"
         },
     ) as ws:
         print(f"Verbonden met signaling server ({SIGNALING_SERVER})")

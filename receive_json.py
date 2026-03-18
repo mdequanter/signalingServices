@@ -5,7 +5,7 @@ import ssl
 import argparse
 
 
-DEFAULT_SERVER = "ws://localhost:9000"
+DEFAULT_SERVER = "wss://signaling.ehb.be"
 DEFAULT_ROOM = "/ws/pathnavigation"
 DEFAULT_TOKEN = "B6zifTK3JWeH6E2tThPKLMwxt0QdqXVJ76GHfq7kTvs"
 
@@ -18,9 +18,8 @@ async def receive_messages(server, room, token, use_tls):
     print("Server :", server)
     print("Room   :", room)
 
-    ssl_context = None
-    if use_tls:
-        ssl_context = ssl.create_default_context()
+    #ssl_context = None
+    ssl_context = ssl.create_default_context()
 
     async with websockets.connect(
         uri,

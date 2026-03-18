@@ -275,6 +275,6 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=5000,
-        ssl_context=("localhost+2.pem", "localhost+2-key.pem"),
+        ssl_context=("jetson-desktop+3.pem", "jetson-desktop+3-key.pem"),
         debug=False
     )
