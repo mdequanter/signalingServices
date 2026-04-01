@@ -151,7 +151,7 @@ async def receive_and_infer():
                 ]
             )
 
-    next_save_at = time.time()
+    last_save_monotonic = None
 
     async with websockets.connect(SIGNALING_SERVER,
         ssl=ssl_context,   # Uncomment if using wss://
@@ -226,16 +226,19 @@ async def receive_and_infer():
             sessionId = frame_meta.get("sessionId")
             DETECTION_CONFIDENCE = frame_meta.get("detection_confidence", DETECTION_CONFIDENCE)
 
-            now = time.time()
+            now_monotonic = time.monotonic()
             saved_this_frame = False
             out_path = None
-            if now >= next_save_at:
+            if (
+                last_save_monotonic is None
+                or now_monotonic - last_save_monotonic >= SAVE_INTERVAL_SEC
+            ):
                 ts = time.strftime("%Y%m%d_%H%M%S")
                 saved_at = time.strftime("%Y-%m-%d %H:%M:%S")
                 fid = "none" if frame_id is None else str(frame_id)
                 out_path = RECORDS_DIR / f"frame_{ts}_id_{fid}.jpg"
                 cv2.imwrite(str(out_path), frame)
-                next_save_at = now + SAVE_INTERVAL_SEC
+                last_save_monotonic = now_monotonic
                 saved_this_frame = True
 
             #print (f"Framedata: {frame_meta}")
