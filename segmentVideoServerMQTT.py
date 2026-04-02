@@ -284,7 +284,7 @@ async def receive_and_infer():
                 saved_this_frame = True
 
             #print (f"Framedata: {frame_meta}")
-            print (f"Last model used: {lastmodel}, latency: {lastlatency} ms, frame_id: {frame_id}, longitude: {longitude}, latitude: {latitude}")
+            #print (f"Last model used: {lastmodel}, latency: {lastlatency} ms, frame_id: {frame_id}, longitude: {longitude}, latitude: {latitude}")
 
             heading = compute_heading(frame, model=lastmodel)
 
