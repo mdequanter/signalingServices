@@ -361,6 +361,7 @@ async def receive_and_infer():
             lastmodel = frame_meta.get("model")
             sessionId = frame_meta.get("sessionId")
             DETECTION_CONFIDENCE = frame_meta.get("detection_confidence", DETECTION_CONFIDENCE)
+            print (f"DETECTION_CONFIDENCE: {DETECTION_CONFIDENCE}")
             returnMasks = bool(frame_meta.get("returnMasks", False))
             sendMQTT = bool(frame_meta.get("sendMQTT", False))
             resolved_model_name = resolve_model_name(lastmodel)
