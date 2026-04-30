@@ -30,6 +30,7 @@ ALLOWED_PATH_LABELS = {"path", "path-oxod"}
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 MQTT_TOPIC = "ehb/pathnavigation/heading"
+ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 
 
 def load_models(models_dir):
@@ -55,6 +56,28 @@ MODELS_BY_NAME, MODEL_ORDER = load_models(MODELS_DIR)
 DEFAULT_MODEL_NAME = "unrealsim" if "unrealsim" in MODELS_BY_NAME else MODEL_ORDER[0]
 
 
+def create_aruco_detector():
+    aruco = getattr(cv2, "aruco", None)
+    if aruco is None or not hasattr(aruco, "ArucoDetector"):
+        print(
+            "OpenCV ArUcoDetector is not available; "
+            "install opencv-contrib-python to enable marker detection."
+        )
+        return None
+
+    dictionary_id = getattr(aruco, ARUCO_DICTIONARY_NAME, None)
+    if dictionary_id is None:
+        print(f"Unknown ArUco dictionary: {ARUCO_DICTIONARY_NAME}")
+        return None
+
+    dictionary = aruco.getPredefinedDictionary(dictionary_id)
+    parameters = aruco.DetectorParameters()
+    return aruco.ArucoDetector(dictionary, parameters)
+
+
+ARUCO_DETECTOR = create_aruco_detector()
+
+
 def create_mqtt_client():
     if mqtt is None:
         print("paho-mqtt is not installed; MQTT publish is disabled.")
@@ -71,7 +94,34 @@ def create_mqtt_client():
         return None
 
 
-def publish_heading(client, heading, session_id, frame_id):
+def add_aruco_marker_payload(payload, aruco_markers):
+    if not aruco_markers:
+        return
+
+    payload["aruco_marker_id"] = aruco_markers[0]["id"]
+    payload["aruco_marker_area_px2"] = aruco_markers[0]["area_px2"]
+    payload["aruco_markers"] = aruco_markers
+
+
+def log_aruco_detection(aruco_markers, frame_id, session_id):
+    if not aruco_markers:
+        return
+
+    marker_summary = ", ".join(
+        (
+            f"id={marker['id']} "
+            f"area={marker['area_px2']}px2"
+        )
+        for marker in aruco_markers
+    )
+    #print(
+    #    "ArUco marker detected: "
+    #    f"{marker_summary}, frame_id={frame_id}, sessionId={session_id}",
+    #    flush=True,
+    #)
+
+
+def publish_heading(client, heading, session_id, frame_id, aruco_markers=None):
     if client is None:
         return
 
@@ -80,6 +130,7 @@ def publish_heading(client, heading, session_id, frame_id):
         "sessionId": session_id,
         "frame_id": frame_id,
     }
+    add_aruco_marker_payload(payload, aruco_markers)
 
     try:
         result = client.publish(MQTT_TOPIC, json.dumps(payload))
@@ -193,6 +244,34 @@ def get_allowed_mask_indices(result, model_names):
         if label in ALLOWED_PATH_LABELS:
             allowed_indices.append(index)
     return allowed_indices
+
+
+def get_aruco_marker_area(corners):
+    points = corners.reshape(4, 2).astype(np.float32)
+    area = float(abs(cv2.contourArea(points)))
+    return round(area, 2)
+
+
+def detect_aruco_markers(frame):
+    if ARUCO_DETECTOR is None:
+        return []
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    marker_corners, marker_ids, _ = ARUCO_DETECTOR.detectMarkers(gray)
+    if marker_ids is None:
+        return []
+
+    markers = []
+    marker_ids = marker_ids.flatten().astype(int).tolist()
+    for marker_id, corners in zip(marker_ids, marker_corners):
+        markers.append(
+            {
+                "id": marker_id,
+                "area_px2": get_aruco_marker_area(corners),
+            }
+        )
+
+    return markers
 
 
 def compute_heading(frame, model=None, return_masks=False):
@@ -367,6 +446,8 @@ async def receive_and_infer():
             heading, resultMasks = compute_heading(
                 frame, model=resolved_model_name, return_masks=returnMasks
             )
+            aruco_markers = detect_aruco_markers(frame)
+            log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
 
@@ -402,12 +483,16 @@ async def receive_and_infer():
                 "frame_id": frame_id,
                 "sessionId": sessionId,
             }
+            add_aruco_marker_payload(response_payload, aruco_markers)
             if returnMasks:
                 response_payload["resultMasks"] = resultMasks
 
+            print (response_payload)
             await ws.send(json.dumps(response_payload))
             if sendMQTT:
-                publish_heading(mqtt_client, heading, sessionId, frame_id)
+                publish_heading(
+                    mqtt_client, heading, sessionId, frame_id, aruco_markers
+                )
 
 
 if __name__ == "__main__":
