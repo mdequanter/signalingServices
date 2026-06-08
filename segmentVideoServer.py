@@ -345,7 +345,29 @@ def detect_aruco_markers(frame, center_tolerance_px=30):
             }
         )
 
-    return markers
+    return sorted(markers, key=lambda marker: marker["area_px2"], reverse=True)
+
+
+def compute_heading_to_point(frame, target_x, target_y):
+    h, w = frame.shape[:2]
+    start_x = w // 2
+    start_y = h
+
+    dx = target_x - start_x
+    dy = start_y - target_y
+    return float(np.degrees(np.arctan2(dy, dx)))
+
+
+def compute_heading_to_marker(frame, aruco_markers):
+    if not aruco_markers:
+        return None
+
+    marker = aruco_markers[0]
+    return compute_heading_to_point(
+        frame,
+        marker["center_x_px"],
+        marker["center_y_px"],
+    )
 
 
 def compute_heading(frame, model=None, return_masks=False):
@@ -401,14 +423,10 @@ def compute_heading(frame, model=None, return_masks=False):
     if not midpoints:
         return 90.0, result_masks
 
-    start_x = w // 2
-    start_y = h
     avg_x = int(np.mean([p[0] for p in midpoints]))
     target_y = min([p[1] for p in midpoints])
 
-    dx = avg_x - start_x
-    dy = start_y - target_y
-    return float(np.degrees(np.arctan2(dy, dx))), result_masks
+    return compute_heading_to_point(frame, avg_x, target_y), result_masks
 
 
 async def receive_and_infer():
@@ -517,10 +535,17 @@ async def receive_and_infer():
             returnMasks = bool(frame_meta.get("returnMasks", False))
             sendMQTT = bool(frame_meta.get("sendMQTT", False))
             resolved_model_name = resolve_model_name(lastmodel)
-            heading, resultMasks = compute_heading(
-                frame, model=resolved_model_name, return_masks=returnMasks
-            )
             aruco_markers = detect_aruco_markers(frame)
+            marker_heading = compute_heading_to_marker(frame, aruco_markers)
+            if marker_heading is None or returnMasks:
+                heading, resultMasks = compute_heading(
+                    frame, model=resolved_model_name, return_masks=returnMasks
+                )
+                if marker_heading is not None:
+                    heading = marker_heading
+            else:
+                heading = marker_heading
+                resultMasks = []
             #log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
