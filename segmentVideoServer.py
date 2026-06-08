@@ -31,6 +31,15 @@ MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 MQTT_TOPIC = "ehb/pathnavigation/heading"
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
+ARUCO_DISTANCE_CALIBRATION_POINTS = [
+    (1.0, 1530.0),
+    (0.5, 6800.0),
+    (0.3, 16800.0),
+]
+ARUCO_AREA_AT_1M_PX2 = sum(
+    area_px2 * (distance_m**2)
+    for distance_m, area_px2 in ARUCO_DISTANCE_CALIBRATION_POINTS
+) / len(ARUCO_DISTANCE_CALIBRATION_POINTS)
 
 
 def load_models(models_dir):
@@ -100,6 +109,7 @@ def add_aruco_marker_payload(payload, aruco_markers):
     
     payload["aruco_marker_id"] = aruco_markers[0]["id"]
     payload["aruco_marker_area"] = aruco_markers[0]["area_px2"]
+    payload["aruco_marker_distance_m"] = aruco_markers[0]["distance_m"]
     payload["aruco_marker_center_x"] = aruco_markers[0]["center_x_px"]
     payload["aruco_marker_center_y"] = aruco_markers[0]["center_y_px"]
     payload["aruco_marker_offset_x"] = aruco_markers[0]["offset_x_px"]
@@ -115,6 +125,7 @@ def log_aruco_detection(aruco_markers, frame_id, session_id):
         (
             f"id={marker['id']} "
             f"area={marker['area_px2']}px2"
+            f"distance={marker['distance_m']}m "
             f"center=({marker['center_x_px']},{marker['center_y_px']})px "
             f"offset_x={marker['offset_x_px']}px "
             f"position={marker['horizontal_position']}"
@@ -259,6 +270,36 @@ def get_aruco_marker_area(corners):
     return round(area, 2)
 
 
+def estimate_aruco_marker_distance_m(area_px2):
+    if area_px2 <= 0:
+        return None
+    return round(float(np.sqrt(ARUCO_AREA_AT_1M_PX2 / area_px2)), 2)
+
+
+def get_horizontal_position_hour(offset_x_px, image_center_x, center_tolerance_px):
+    if abs(offset_x_px) <= center_tolerance_px:
+        return 12
+
+    max_offset_px = max(image_center_x - center_tolerance_px, 1)
+    offset_ratio = min(
+        (abs(offset_x_px) - center_tolerance_px) / max_offset_px,
+        1.0,
+    )
+
+    if offset_x_px < 0:
+        if offset_ratio <= 1 / 3:
+            return 11
+        if offset_ratio <= 2 / 3:
+            return 10
+        return 9
+
+    if offset_ratio <= 1 / 3:
+        return 1
+    if offset_ratio <= 2 / 3:
+        return 2
+    return 3
+
+
 def detect_aruco_markers(frame, center_tolerance_px=30):
     if ARUCO_DETECTOR is None:
         return []
@@ -283,17 +324,19 @@ def detect_aruco_markers(frame, center_tolerance_px=30):
 
         offset_x_px = marker_center_x - image_center_x
 
-        if abs(offset_x_px) <= center_tolerance_px:
-            horizontal_position = "center"
-        elif offset_x_px < 0:
-            horizontal_position = "left"
-        else:
-            horizontal_position = "right"
+        horizontal_position = get_horizontal_position_hour(
+            offset_x_px,
+            image_center_x,
+            center_tolerance_px,
+        )
+
+        area_px2 = get_aruco_marker_area(corners)
 
         markers.append(
             {
                 "id": marker_id,
-                "area_px2": get_aruco_marker_area(corners),
+                "area_px2": area_px2,
+                "distance_m": estimate_aruco_marker_distance_m(area_px2),
                 "center_x_px": round(marker_center_x, 2),
                 "center_y_px": round(marker_center_y, 2),
                 "offset_x_px": round(offset_x_px, 2),
@@ -477,7 +520,7 @@ async def receive_and_infer():
                 frame, model=resolved_model_name, return_masks=returnMasks
             )
             aruco_markers = detect_aruco_markers(frame)
-            #log_aruco_detection(aruco_markers, frame_id, sessionId)
+            log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
 
