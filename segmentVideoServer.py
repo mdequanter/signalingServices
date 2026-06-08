@@ -32,9 +32,10 @@ MQTT_PORT = 1883
 MQTT_TOPIC = "ehb/pathnavigation/heading"
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 ARUCO_DISTANCE_CALIBRATION_POINTS = [
-    (1.0, 1530.0),
-    (0.5, 6800.0),
-    (0.3, 16800.0),
+    (1.0, 1587.0),
+    (0.5, 6200.0),
+    (0.3, 16200.0),
+    (1.4,750.0),
 ]
 ARUCO_AREA_AT_1M_PX2 = sum(
     area_px2 * (distance_m**2)
@@ -520,7 +521,7 @@ async def receive_and_infer():
                 frame, model=resolved_model_name, return_masks=returnMasks
             )
             aruco_markers = detect_aruco_markers(frame)
-            log_aruco_detection(aruco_markers, frame_id, sessionId)
+            #log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
 
