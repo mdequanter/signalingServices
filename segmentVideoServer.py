@@ -97,9 +97,13 @@ def create_mqtt_client():
 def add_aruco_marker_payload(payload, aruco_markers):
     if not aruco_markers:
         return
-
+    
     payload["aruco_marker_id"] = aruco_markers[0]["id"]
-    payload["aruco_marker_area_px2"] = aruco_markers[0]["area_px2"]
+    payload["aruco_marker_area"] = aruco_markers[0]["area_px2"]
+    payload["aruco_marker_center_x"] = aruco_markers[0]["center_x_px"]
+    payload["aruco_marker_center_y"] = aruco_markers[0]["center_y_px"]
+    payload["aruco_marker_offset_x"] = aruco_markers[0]["offset_x_px"]
+    payload["aruco_marker_horizontal_position"] = aruco_markers[0]["horizontal_position"]
     payload["aruco_markers"] = aruco_markers
 
 
@@ -111,14 +115,17 @@ def log_aruco_detection(aruco_markers, frame_id, session_id):
         (
             f"id={marker['id']} "
             f"area={marker['area_px2']}px2"
+            f"center=({marker['center_x_px']},{marker['center_y_px']})px "
+            f"offset_x={marker['offset_x_px']}px "
+            f"position={marker['horizontal_position']}"
         )
         for marker in aruco_markers
     )
-    #print(
-    #    "ArUco marker detected: "
-    #    f"{marker_summary}, frame_id={frame_id}, sessionId={session_id}",
-    #    flush=True,
-    #)
+    print(
+        "ArUco marker detected: "
+        f"{marker_summary}, frame_id={frame_id}, sessionId={session_id}",
+        flush=True,
+    )
 
 
 def publish_heading(client, heading, session_id, frame_id, aruco_markers=None):
@@ -252,22 +259,45 @@ def get_aruco_marker_area(corners):
     return round(area, 2)
 
 
-def detect_aruco_markers(frame):
+def detect_aruco_markers(frame, center_tolerance_px=30):
     if ARUCO_DETECTOR is None:
         return []
 
+    h, w = frame.shape[:2]
+    image_center_x = w / 2
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     marker_corners, marker_ids, _ = ARUCO_DETECTOR.detectMarkers(gray)
+
     if marker_ids is None:
         return []
 
     markers = []
     marker_ids = marker_ids.flatten().astype(int).tolist()
+
     for marker_id, corners in zip(marker_ids, marker_corners):
+        points = corners.reshape(4, 2).astype(np.float32)
+
+        marker_center_x = float(np.mean(points[:, 0]))
+        marker_center_y = float(np.mean(points[:, 1]))
+
+        offset_x_px = marker_center_x - image_center_x
+
+        if abs(offset_x_px) <= center_tolerance_px:
+            horizontal_position = "center"
+        elif offset_x_px < 0:
+            horizontal_position = "left"
+        else:
+            horizontal_position = "right"
+
         markers.append(
             {
                 "id": marker_id,
                 "area_px2": get_aruco_marker_area(corners),
+                "center_x_px": round(marker_center_x, 2),
+                "center_y_px": round(marker_center_y, 2),
+                "offset_x_px": round(offset_x_px, 2),
+                "horizontal_position": horizontal_position,
             }
         )
 
@@ -447,7 +477,7 @@ async def receive_and_infer():
                 frame, model=resolved_model_name, return_masks=returnMasks
             )
             aruco_markers = detect_aruco_markers(frame)
-            log_aruco_detection(aruco_markers, frame_id, sessionId)
+            #log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
 
@@ -487,7 +517,7 @@ async def receive_and_infer():
             if returnMasks:
                 response_payload["resultMasks"] = resultMasks
 
-            print (response_payload)
+            #print (response_payload)
             await ws.send(json.dumps(response_payload))
             if sendMQTT:
                 publish_heading(
