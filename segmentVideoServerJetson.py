@@ -591,14 +591,14 @@ async def receive_and_infer():
 
 
             #print (response_payload)
-            print (f"Model: {resolved_model_name} ({model_path}), "
-                f"Heading: {response_payload['heading']}°, "
-                f"Marker Heading: {response_payload.get('marker_heading', 'N/A')}°, "
-                f"Frame ID: {frame_id}, Session ID: {sessionId}, "
-                f"ArUco Markers: {len(aruco_markers)}, "
-                f"Detection Confidence: {DETECTION_CONFIDENCE}, "
-                f"Latency: {latency_ms}ms"
-            )
+            #print (f"Model: {resolved_model_name} ({model_path}), "
+            #    f"Heading: {response_payload['heading']}°, "
+            #    f"Marker Heading: {response_payload.get('marker_heading', 'N/A')}°, "
+            #    f"Frame ID: {frame_id}, Session ID: {sessionId}, "
+            #    f"ArUco Markers: {len(aruco_markers)}, "
+            #    f"Detection Confidence: {DETECTION_CONFIDENCE}, "
+            #    f"Latency: {latency_ms}ms"
+            #)
             await ws.send(json.dumps(response_payload))
             if sendMQTT:
                 publish_heading(
