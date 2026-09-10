@@ -209,3 +209,4 @@ __marimo__/
 *.wav
 /records/laerbeekbos
 /records
+latency_log.csv
