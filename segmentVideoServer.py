@@ -2,7 +2,11 @@ import asyncio
 import base64
 import csv
 import json
+import os
 import ssl
+import subprocess
+import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -30,6 +34,13 @@ ALLOWED_PATH_LABELS = {"path", "path-oxod"}
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
 MQTT_TOPIC = "ehb/pathnavigation/heading"
+RECONNECT_DELAY_MIN_SEC = 1
+RECONNECT_DELAY_MAX_SEC = 30
+WS_PING_INTERVAL_SEC = 10
+WS_PING_TIMEOUT_SEC = 10
+WS_SEND_TIMEOUT_SEC = 10
+FRAME_PROCESSING_TIMEOUT_SEC = 30
+WATCHDOG_TIMEOUT_SEC = 60
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 ARUCO_DISTANCE_CALIBRATION_POINTS = [
     (1.0, 1587.0),
@@ -424,8 +435,51 @@ def compute_heading(frame, model=None, return_masks=False):
     return compute_heading_to_point(frame, avg_x, target_y), result_masks
 
 
+def analyze_frame(frame, model_name, return_masks):
+    aruco_markers = detect_aruco_markers(frame)
+    marker_heading = compute_heading_to_marker(frame, aruco_markers)
+    heading = 90.0
+    result_masks = []
+    if return_masks:
+        heading, result_masks = compute_heading(
+            frame, model=model_name, return_masks=return_masks
+        )
+    return aruco_markers, marker_heading, heading, result_masks
+
+
+def restart_process(reason):
+    print(f"Restarting process: {reason}", flush=True)
+    if os.name == "posix":
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        subprocess.Popen([sys.executable] + sys.argv)
+        os._exit(1)
+
+
+_last_heartbeat = time.monotonic()
+
+
+async def heartbeat():
+    global _last_heartbeat
+    while True:
+        _last_heartbeat = time.monotonic()
+        await asyncio.sleep(1)
+
+
+def start_watchdog():
+    """Restarts the process when the asyncio event loop stops responding."""
+
+    def watch():
+        while True:
+            time.sleep(5)
+            stalled_sec = time.monotonic() - _last_heartbeat
+            if stalled_sec > WATCHDOG_TIMEOUT_SEC:
+                restart_process(f"event loop blocked for {stalled_sec:.0f}s")
+
+    threading.Thread(target=watch, daemon=True, name="watchdog").start()
+
+
 async def receive_and_infer():
-    global DETECTION_CONFIDENCE
     ssl_context = ssl.create_default_context()
     mqtt_client = create_mqtt_client()
     print(
@@ -445,10 +499,36 @@ async def receive_and_infer():
                 ]
             )
 
+    heartbeat_task = asyncio.create_task(heartbeat())  # noqa: F841 (keep a reference)
+    start_watchdog()
+
+    reconnect_delay = RECONNECT_DELAY_MIN_SEC
+    while True:
+        connected_at = time.monotonic()
+        try:
+            await serve_connection(ssl_context, mqtt_client)
+            print("Connection closed by server.")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Connection error: {type(exc).__name__}: {exc}")
+
+        # Reset the backoff if the connection was healthy for a while
+        if time.monotonic() - connected_at > 60:
+            reconnect_delay = RECONNECT_DELAY_MIN_SEC
+        print(f"Reconnecting in {reconnect_delay}s...")
+        await asyncio.sleep(reconnect_delay)
+        reconnect_delay = min(reconnect_delay * 2, RECONNECT_DELAY_MAX_SEC)
+
+
+async def serve_connection(ssl_context, mqtt_client):
+    global DETECTION_CONFIDENCE
     async with websockets.connect(SIGNALING_SERVER,
         ssl=ssl_context,   # Uncomment if using wss://
         origin="http://localhost",
         compression=None,
+        ping_interval=WS_PING_INTERVAL_SEC,
+        ping_timeout=WS_PING_TIMEOUT_SEC,
         additional_headers={
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) "
@@ -530,15 +610,19 @@ async def receive_and_infer():
             returnMasks = bool(frame_meta.get("returnMasks", False))
             sendMQTT = bool(frame_meta.get("sendMQTT", False))
             resolved_model_name = resolve_model_name(lastmodel)
-            aruco_markers = detect_aruco_markers(frame)
-            marker_heading = compute_heading_to_marker(frame, aruco_markers)
-            heading = 90.0
-            if returnMasks:
-                heading, resultMasks = compute_heading(
-                    frame, model=resolved_model_name, return_masks=returnMasks
+            # Run inference in a worker thread so the event loop keeps answering
+            # websocket pings; a hung inference is unrecoverable, so restart.
+            try:
+                aruco_markers, marker_heading, heading, resultMasks = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        analyze_frame, frame, resolved_model_name, returnMasks
+                    ),
+                    timeout=FRAME_PROCESSING_TIMEOUT_SEC,
                 )
-            else:
-                resultMasks = []
+            except asyncio.TimeoutError:
+                restart_process(
+                    f"frame processing exceeded {FRAME_PROCESSING_TIMEOUT_SEC}s"
+                )
             #log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
@@ -594,7 +678,9 @@ async def receive_and_infer():
             #    f"Detection Confidence: {DETECTION_CONFIDENCE}, "
             #    f"Latency: {latency_ms}ms"
             #)
-            await ws.send(json.dumps(response_payload))
+            await asyncio.wait_for(
+                ws.send(json.dumps(response_payload)), timeout=WS_SEND_TIMEOUT_SEC
+            )
             if sendMQTT:
                 publish_heading(
                     mqtt_client, heading, sessionId, frame_id, aruco_markers
