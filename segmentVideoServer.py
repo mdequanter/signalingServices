@@ -243,23 +243,37 @@ def update_latency_window(event_times, now_monotonic):
 
 def ensure_csv_header():
     """Writes the header, or upgrades an old log without timestamp column."""
-    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
-        with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
-            csv.writer(csv_file, quoting=csv.QUOTE_ALL).writerow(CSV_HEADER)
-        return
+    try:
+        if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
+            append_csv_row(CSV_HEADER)
+            return
 
-    with CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
-        rows = list(csv.reader(csv_file))
-    if rows and rows[0] == CSV_HEADER:
-        return
+        with CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
+            rows = list(csv.reader(csv_file))
+        if rows and rows[0] == CSV_HEADER:
+            return
 
-    # Old format: prepend an empty timestamp to existing rows
-    with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
-        csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
-        csv_writer.writerow(CSV_HEADER)
-        for row in rows[1:]:
-            csv_writer.writerow([""] + row)
-    print(f"Upgraded {CSV_PATH} with a timestamp column")
+        # Old format: prepend an empty timestamp to existing rows. Write to a
+        # temp file first so the original survives a failed write.
+        tmp_path = CSV_PATH.with_suffix(".csv.tmp")
+        with tmp_path.open("w", newline="", encoding="utf-8") as csv_file:
+            csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
+            csv_writer.writerow(CSV_HEADER)
+            for row in rows[1:]:
+                csv_writer.writerow([""] + row)
+        os.replace(tmp_path, CSV_PATH)
+        print(f"Upgraded {CSV_PATH} with a timestamp column")
+    except OSError as exc:
+        print(f"Could not prepare {CSV_PATH.resolve()}: {exc}")
+
+
+def append_csv_row(row):
+    """Appends a row to the latency log; a failing log never stops processing."""
+    try:
+        with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
+            csv.writer(csv_file, quoting=csv.QUOTE_ALL).writerow(row)
+    except OSError as exc:
+        print(f"Could not write to {CSV_PATH.resolve()}: {exc}")
 
 
 def decode_message_to_frame(msg):
@@ -662,18 +676,16 @@ async def serve_connection(ssl_context, mqtt_client):
                 latency_burst_active = False
 
             if should_log_latency:
-                with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
-                    csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
-                    csv_writer.writerow(
-                        [
-                            datetime.now().isoformat(timespec="seconds"),
-                            longitude,
-                            latitude,
-                            latency_ms,
-                            str(model_path),
-                            DETECTION_CONFIDENCE,
-                        ]
-                    )
+                append_csv_row(
+                    [
+                        datetime.now().isoformat(timespec="seconds"),
+                        longitude,
+                        latitude,
+                        latency_ms,
+                        str(model_path),
+                        DETECTION_CONFIDENCE,
+                    ]
+                )
 
             response_payload = {
                 "heading": round(heading, 2),
