@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -31,6 +32,14 @@ LATENCY_LOG_THRESHOLD_MS = 200
 LATENCY_LOG_EVENT_COUNT = 10
 LATENCY_LOG_WINDOW_SEC = 5
 CSV_PATH = Path("latency_log.csv")
+CSV_HEADER = [
+    "timestamp",
+    "longitude",
+    "latitude",
+    "lastlatency",
+    "model_path",
+    "detection_confidence",
+]
 ALLOWED_PATH_LABELS = {"path", "path-oxod"}
 MQTT_BROKER = "broker.emqx.io"
 MQTT_PORT = 1883
@@ -231,6 +240,27 @@ def update_latency_window(event_times, now_monotonic):
     while event_times and event_times[0] < cutoff:
         event_times.popleft()
     return len(event_times) >= LATENCY_LOG_EVENT_COUNT
+
+def ensure_csv_header():
+    """Writes the header, or upgrades an old log without timestamp column."""
+    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
+        with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
+            csv.writer(csv_file, quoting=csv.QUOTE_ALL).writerow(CSV_HEADER)
+        return
+
+    with CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
+        rows = list(csv.reader(csv_file))
+    if rows and rows[0] == CSV_HEADER:
+        return
+
+    # Old format: prepend an empty timestamp to existing rows
+    with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
+        csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
+        csv_writer.writerow(CSV_HEADER)
+        for row in rows[1:]:
+            csv_writer.writerow([""] + row)
+    print(f"Upgraded {CSV_PATH} with a timestamp column")
+
 
 def decode_message_to_frame(msg):
     """
@@ -486,19 +516,7 @@ async def receive_and_infer():
     print(
         f"Loaded models: {', '.join(MODEL_ORDER)}. Default model: {DEFAULT_MODEL_NAME}"
     )
-    csv_exists = CSV_PATH.exists()
-    with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
-        csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
-        if not csv_exists or CSV_PATH.stat().st_size == 0:
-            csv_writer.writerow(
-                [
-                    "longitude",
-                    "latitude",
-                    "lastlatency",
-                    "model_path",
-                    "detection_confidence",
-                ]
-            )
+    ensure_csv_header()
 
     heartbeat_task = asyncio.create_task(heartbeat())  # noqa: F841 (keep a reference)
     start_watchdog()
@@ -648,6 +666,7 @@ async def serve_connection(ssl_context, mqtt_client):
                     csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_ALL)
                     csv_writer.writerow(
                         [
+                            datetime.now().isoformat(timespec="seconds"),
                             longitude,
                             latitude,
                             latency_ms,
