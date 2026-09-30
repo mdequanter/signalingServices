@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections import deque
 from pathlib import Path
 
@@ -512,6 +513,7 @@ async def receive_and_infer():
             raise
         except Exception as exc:
             print(f"Connection error: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
 
         # Reset the backoff if the connection was healthy for a while
         if time.monotonic() - connected_at > 60:
