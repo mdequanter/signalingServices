@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,7 @@ WS_PING_TIMEOUT_SEC = 10
 WS_SEND_TIMEOUT_SEC = 10
 FRAME_PROCESSING_TIMEOUT_SEC = 30
 WATCHDOG_TIMEOUT_SEC = 60
+PROFILE_WINDOW_FRAMES = 20
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 ARUCO_DISTANCE_CALIBRATION_POINTS = [
     (1.0, 1587.0),
@@ -421,14 +423,27 @@ def compute_heading_to_marker(frame, aruco_markers):
     )
 
 
-def compute_heading(frame, model=None, return_masks=False):
+def compute_heading(frame, model=None, return_masks=False, timings=None):
+    if timings is None:
+        timings = {}
     h, w = frame.shape[:2]
 
     model_name = resolve_model_name(model)
     yolo_model = MODELS_BY_NAME[model_name]["model"]
     model_names = getattr(yolo_model, "names", {})
 
-    results = yolo_model(frame, conf=DETECTION_CONFIDENCE, verbose=False)
+    with timed(timings, "yolo"):
+        results = yolo_model(frame, conf=DETECTION_CONFIDENCE, verbose=False)
+    for r in results:
+        # Ultralytics' own breakdown of the model call (ms)
+        speed = getattr(r, "speed", None) or {}
+        for speed_key, timing_key in (
+            ("preprocess", "yolo_pre"),
+            ("inference", "yolo_infer"),
+            ("postprocess", "yolo_post"),
+        ):
+            if speed.get(speed_key) is not None:
+                timings[timing_key] = timings.get(timing_key, 0.0) + speed[speed_key]
 
     midpoints = []
     result_masks = []
@@ -441,35 +456,38 @@ def compute_heading(frame, model=None, return_masks=False):
             if mask_index >= len(r.masks.data):
                 continue
 
-            mask_tensor = r.masks.data[mask_index]
-            mask = mask_tensor.cpu().numpy()
-            mask = (mask * 255).astype(np.uint8)
-            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+            with timed(timings, "mask_resize"):
+                mask_tensor = r.masks.data[mask_index]
+                mask = mask_tensor.cpu().numpy()
+                mask = (mask * 255).astype(np.uint8)
+                mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
             if return_masks:
-                contours, _ = cv2.findContours(
-                    mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                )
-                contour_points = []
-                for contour in contours:
-                    if len(contour) == 0:
-                        continue
-                    contour_points.append(
-                        [
-                            [int(point[0][0]), int(point[0][1])]
-                            for point in contour
-                        ]
+                with timed(timings, "contours"):
+                    contours, _ = cv2.findContours(
+                        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
                     )
-                if contour_points:
-                    result_masks.append(contour_points)
+                    contour_points = []
+                    for contour in contours:
+                        if len(contour) == 0:
+                            continue
+                        contour_points.append(
+                            [
+                                [int(point[0][0]), int(point[0][1])]
+                                for point in contour
+                            ]
+                        )
+                    if contour_points:
+                        result_masks.append(contour_points)
 
-            for rr in SCAN_HEIGHTS:
-                y = int(h * rr)
-                if y >= h:
-                    continue
-                idx = np.where(mask[y, :] > 0)[0]
-                if len(idx) > 0:
-                    midpoints.append((int(np.mean(idx)), y))
+            with timed(timings, "scanlines"):
+                for rr in SCAN_HEIGHTS:
+                    y = int(h * rr)
+                    if y >= h:
+                        continue
+                    idx = np.where(mask[y, :] > 0)[0]
+                    if len(idx) > 0:
+                        midpoints.append((int(np.mean(idx)), y))
 
     if not midpoints:
         return 90.0, result_masks
@@ -480,16 +498,92 @@ def compute_heading(frame, model=None, return_masks=False):
     return compute_heading_to_point(frame, avg_x, target_y), result_masks
 
 
-def analyze_frame(frame, model_name, return_masks):
-    aruco_markers = detect_aruco_markers(frame)
+def analyze_frame(frame, model_name, return_masks, timings):
+    with timed(timings, "aruco"):
+        aruco_markers = detect_aruco_markers(frame)
     marker_heading = compute_heading_to_marker(frame, aruco_markers)
     heading = 90.0
     result_masks = []
     if return_masks:
-        heading, result_masks = compute_heading(
-            frame, model=model_name, return_masks=return_masks
-        )
+        with timed(timings, "segmentation"):
+            heading, result_masks = compute_heading(
+                frame, model=model_name, return_masks=return_masks, timings=timings
+            )
     return aruco_markers, marker_heading, heading, result_masks
+
+
+@contextmanager
+def timed(timings, key):
+    """Adds the elapsed time of the block (ms) to timings[key]."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[key] = timings.get(key, 0.0) + (time.perf_counter() - start) * 1000
+
+
+# Printed in this order; sub-steps are indented under their parent step
+PROFILE_STAGES = [
+    ("decode", "decode (JSON/base64 + JPEG)"),
+    ("worker", "worker thread total"),
+    ("aruco", "  aruco detection"),
+    ("segmentation", "  segmentation total"),
+    ("yolo", "    yolo model call"),
+    ("yolo_pre", "      ultralytics preprocess"),
+    ("yolo_infer", "      ultralytics inference"),
+    ("yolo_post", "      ultralytics postprocess"),
+    ("mask_resize", "    mask to cpu + resize"),
+    ("contours", "    contours to points"),
+    ("scanlines", "    scanlines / heading"),
+    ("thread_overhead", "  thread handoff overhead"),
+    ("csv", "latency csv log"),
+    ("encode", "response JSON encode"),
+    ("send", "websocket send"),
+    ("mqtt", "mqtt publish"),
+    ("total", "total per frame"),
+]
+
+
+class StageProfiler:
+    """Collects per-stage timings and prints the averages every N frames."""
+
+    def __init__(self, window):
+        self.window = window
+        self.reset()
+
+    def reset(self):
+        self.frames = 0
+        self.totals = {}
+        self.counts = {}
+        self.frame_shape = None
+        self.started = time.perf_counter()
+
+    def add_frame(self, timings, frame_shape):
+        for key, value in timings.items():
+            self.totals[key] = self.totals.get(key, 0.0) + value
+            self.counts[key] = self.counts.get(key, 0) + 1
+        self.frames += 1
+        self.frame_shape = frame_shape
+        if self.frames >= self.window:
+            self.report()
+            self.reset()
+
+    def report(self):
+        elapsed = time.perf_counter() - self.started
+        fps = self.frames / elapsed if elapsed > 0 else 0.0
+        h, w = self.frame_shape[:2]
+        lines = [
+            f"[timing] last {self.frames} frames: {fps:.1f} fps, "
+            f"{w}x{h}, avg ms per frame:"
+        ]
+        for key, label in PROFILE_STAGES:
+            count = self.counts.get(key, 0)
+            if count == 0:
+                continue
+            avg_ms = self.totals[key] / count
+            ran_on = f"  ({count}/{self.frames} frames)" if count < self.frames else ""
+            lines.append(f"  {label:<32}{avg_ms:8.1f}{ran_on}")
+        print("\n".join(lines), flush=True)
 
 
 def restart_process(reason):
@@ -576,9 +670,12 @@ async def serve_connection(ssl_context, mqtt_client):
         pending_frame_meta = {}
         latency_threshold_events = deque()
         latency_burst_active = False
+        profiler = StageProfiler(PROFILE_WINDOW_FRAMES)
 
         while True:
             msg = await ws.recv()
+            frame_started = time.perf_counter()
+            timings = {}
             frame_meta = {}
 
             if isinstance(msg, str):
@@ -601,7 +698,8 @@ async def serve_connection(ssl_context, mqtt_client):
                 except json.JSONDecodeError:
                     pass
 
-            frame = decode_message_to_frame(msg)
+            with timed(timings, "decode"):
+                frame = decode_message_to_frame(msg)
 
             if isinstance(msg, (bytes, bytearray)):
                 frame_meta = pending_frame_meta
@@ -647,16 +745,23 @@ async def serve_connection(ssl_context, mqtt_client):
             # Run inference in a worker thread so the event loop keeps answering
             # websocket pings; a hung inference is unrecoverable, so restart.
             try:
-                aruco_markers, marker_heading, heading, resultMasks = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        analyze_frame, frame, resolved_model_name, returnMasks
-                    ),
-                    timeout=FRAME_PROCESSING_TIMEOUT_SEC,
-                )
+                with timed(timings, "worker"):
+                    aruco_markers, marker_heading, heading, resultMasks = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            analyze_frame, frame, resolved_model_name, returnMasks, timings
+                        ),
+                        timeout=FRAME_PROCESSING_TIMEOUT_SEC,
+                    )
             except asyncio.TimeoutError:
                 restart_process(
                     f"frame processing exceeded {FRAME_PROCESSING_TIMEOUT_SEC}s"
                 )
+            timings["thread_overhead"] = max(
+                timings["worker"]
+                - timings.get("aruco", 0.0)
+                - timings.get("segmentation", 0.0),
+                0.0,
+            )
             #log_aruco_detection(aruco_markers, frame_id, sessionId)
             model_path = MODELS_BY_NAME[resolved_model_name]["path"]
             latency_ms = parse_latency_ms(lastlatency)
@@ -676,30 +781,33 @@ async def serve_connection(ssl_context, mqtt_client):
                 latency_burst_active = False
 
             if should_log_latency:
-                append_csv_row(
-                    [
-                        datetime.now().isoformat(timespec="seconds"),
-                        longitude,
-                        latitude,
-                        latency_ms,
-                        str(model_path),
-                        DETECTION_CONFIDENCE,
-                    ]
-                )
+                with timed(timings, "csv"):
+                    append_csv_row(
+                        [
+                            datetime.now().isoformat(timespec="seconds"),
+                            longitude,
+                            latitude,
+                            latency_ms,
+                            str(model_path),
+                            DETECTION_CONFIDENCE,
+                        ]
+                    )
 
-            response_payload = {
-                "heading": round(heading, 2),
-                "frame_id": frame_id,
-                "sessionId": sessionId,
-            }
-            add_aruco_marker_payload(response_payload, aruco_markers)
+            with timed(timings, "encode"):
+                response_payload = {
+                    "heading": round(heading, 2),
+                    "frame_id": frame_id,
+                    "sessionId": sessionId,
+                }
+                add_aruco_marker_payload(response_payload, aruco_markers)
 
-            if marker_heading is not None:
-                response_payload["marker_heading"] = round(marker_heading, 2)
+                if marker_heading is not None:
+                    response_payload["marker_heading"] = round(marker_heading, 2)
 
-            # Only include resultMasks if marker_heading is not available, to save bandwidth when possible
-            if marker_heading is None:
-                response_payload["resultMasks"] = resultMasks
+                # Only include resultMasks if marker_heading is not available, to save bandwidth when possible
+                if marker_heading is None:
+                    response_payload["resultMasks"] = resultMasks
+                response_json = json.dumps(response_payload)
 
 
             #print (response_payload)
@@ -711,13 +819,18 @@ async def serve_connection(ssl_context, mqtt_client):
             #    f"Detection Confidence: {DETECTION_CONFIDENCE}, "
             #    f"Latency: {latency_ms}ms"
             #)
-            await asyncio.wait_for(
-                ws.send(json.dumps(response_payload)), timeout=WS_SEND_TIMEOUT_SEC
-            )
-            if sendMQTT:
-                publish_heading(
-                    mqtt_client, heading, sessionId, frame_id, aruco_markers
+            with timed(timings, "send"):
+                await asyncio.wait_for(
+                    ws.send(response_json), timeout=WS_SEND_TIMEOUT_SEC
                 )
+            if sendMQTT:
+                with timed(timings, "mqtt"):
+                    publish_heading(
+                        mqtt_client, heading, sessionId, frame_id, aruco_markers
+                    )
+
+            timings["total"] = (time.perf_counter() - frame_started) * 1000
+            profiler.add_frame(timings, frame.shape)
 
 
 if __name__ == "__main__":
