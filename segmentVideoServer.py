@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +110,8 @@ def create_aruco_detector():
 
 
 ARUCO_DETECTOR = create_aruco_detector()
+# One worker: ArucoDetector is not shared between threads that way
+ARUCO_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aruco")
 
 
 def create_mqtt_client():
@@ -498,10 +501,15 @@ def compute_heading(frame, model=None, return_masks=False, timings=None):
     return compute_heading_to_point(frame, avg_x, target_y), result_masks
 
 
-def analyze_frame(frame, model_name, return_masks, timings):
+def detect_aruco_markers_timed(frame, timings):
     with timed(timings, "aruco"):
-        aruco_markers = detect_aruco_markers(frame)
-    marker_heading = compute_heading_to_marker(frame, aruco_markers)
+        return detect_aruco_markers(frame)
+
+
+def analyze_frame(frame, model_name, return_masks, timings):
+    # ArUco (OpenCV, CPU) runs in parallel with the segmentation (YOLO, GPU);
+    # both release the GIL, so the frame costs max() instead of the sum.
+    aruco_future = ARUCO_EXECUTOR.submit(detect_aruco_markers_timed, frame, timings)
     # De richting komt altijd uit de segmentatie; return_masks bepaalt enkel of
     # de contouren mee teruggaan. Sloeg deze stap over wanneer er geen maskers
     # gevraagd werden, dan kreeg de client altijd 90.0 graden terug en stuurde
@@ -512,6 +520,9 @@ def analyze_frame(frame, model_name, return_masks, timings):
         )
     if not return_masks:
         result_masks = []
+    with timed(timings, "aruco_wait"):
+        aruco_markers = aruco_future.result()
+    marker_heading = compute_heading_to_marker(frame, aruco_markers)
     return aruco_markers, marker_heading, heading, result_masks
 
 
@@ -529,8 +540,9 @@ def timed(timings, key):
 PROFILE_STAGES = [
     ("decode", "decode (JSON/base64 + JPEG)"),
     ("worker", "worker thread total"),
-    ("aruco", "  aruco detection"),
-    ("segmentation", "  segmentation total"),
+    ("aruco", "  aruco detection (parallel)"),
+    ("segmentation", "  segmentation total (parallel)"),
+    ("aruco_wait", "  wait for aruco after segm."),
     ("yolo", "    yolo model call"),
     ("yolo_pre", "      ultralytics preprocess"),
     ("yolo_infer", "      ultralytics inference"),
@@ -761,8 +773,8 @@ async def serve_connection(ssl_context, mqtt_client):
                 )
             timings["thread_overhead"] = max(
                 timings["worker"]
-                - timings.get("aruco", 0.0)
-                - timings.get("segmentation", 0.0),
+                - timings.get("segmentation", 0.0)
+                - timings.get("aruco_wait", 0.0),
                 0.0,
             )
             #log_aruco_detection(aruco_markers, frame_id, sessionId)
