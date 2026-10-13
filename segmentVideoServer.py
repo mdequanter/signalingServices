@@ -502,13 +502,16 @@ def analyze_frame(frame, model_name, return_masks, timings):
     with timed(timings, "aruco"):
         aruco_markers = detect_aruco_markers(frame)
     marker_heading = compute_heading_to_marker(frame, aruco_markers)
-    heading = 90.0
-    result_masks = []
-    if return_masks:
-        with timed(timings, "segmentation"):
-            heading, result_masks = compute_heading(
-                frame, model=model_name, return_masks=return_masks, timings=timings
-            )
+    # De richting komt altijd uit de segmentatie; return_masks bepaalt enkel of
+    # de contouren mee teruggaan. Sloeg deze stap over wanneer er geen maskers
+    # gevraagd werden, dan kreeg de client altijd 90.0 graden terug en stuurde
+    # de begeleiding nooit bij.
+    with timed(timings, "segmentation"):
+        heading, result_masks = compute_heading(
+            frame, model=model_name, return_masks=return_masks, timings=timings
+        )
+    if not return_masks:
+        result_masks = []
     return aruco_markers, marker_heading, heading, result_masks
 
 
