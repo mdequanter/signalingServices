@@ -54,6 +54,7 @@ WS_SEND_TIMEOUT_SEC = 10
 FRAME_PROCESSING_TIMEOUT_SEC = 30
 WATCHDOG_TIMEOUT_SEC = 60
 PROFILE_WINDOW_FRAMES = 20
+TIMING_CSV_PATH = Path("timing_log.csv")
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 ARUCO_DISTANCE_CALIBRATION_POINTS = [
     (1.0, 1587.0),
@@ -679,6 +680,7 @@ async def receive_and_infer():
         f"Loaded models: {', '.join(MODEL_ORDER)}. Default model: {DEFAULT_MODEL_NAME}"
     )
     ensure_csv_header()
+    ensure_timing_csv_header()
 
     heartbeat_task = asyncio.create_task(heartbeat())  # noqa: F841 (keep a reference)
     start_watchdog()
