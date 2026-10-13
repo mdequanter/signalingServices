@@ -54,6 +54,7 @@ WS_SEND_TIMEOUT_SEC = 10
 FRAME_PROCESSING_TIMEOUT_SEC = 30
 WATCHDOG_TIMEOUT_SEC = 60
 PROFILE_WINDOW_FRAMES = 20
+TIMING_CSV_PATH = Path("timing_log.csv")
 ARUCO_DICTIONARY_NAME = "DICT_4X4_50"
 ARUCO_DISTANCE_CALIBRATION_POINTS = [
     (1.0, 1587.0),
@@ -272,13 +273,39 @@ def ensure_csv_header():
         print(f"Could not prepare {CSV_PATH.resolve()}: {exc}")
 
 
-def append_csv_row(row):
-    """Appends a row to the latency log; a failing log never stops processing."""
+def append_csv_row(row, path=CSV_PATH):
+    """Appends a row to a csv log; a failing log never stops processing."""
     try:
-        with CSV_PATH.open("a", newline="", encoding="utf-8") as csv_file:
+        with path.open("a", newline="", encoding="utf-8") as csv_file:
             csv.writer(csv_file, quoting=csv.QUOTE_ALL).writerow(row)
     except OSError as exc:
-        print(f"Could not write to {CSV_PATH.resolve()}: {exc}")
+        print(f"Could not write to {path.resolve()}: {exc}")
+
+
+def ensure_timing_csv_header():
+    """Writes the header; an existing log with other columns is moved aside."""
+    header = timing_csv_header()
+    try:
+        if TIMING_CSV_PATH.exists() and TIMING_CSV_PATH.stat().st_size > 0:
+            with TIMING_CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
+                if next(csv.reader(csv_file), None) == header:
+                    return
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            old_path = TIMING_CSV_PATH.with_name(
+                f"{TIMING_CSV_PATH.stem}_{stamp}{TIMING_CSV_PATH.suffix}"
+            )
+            os.replace(TIMING_CSV_PATH, old_path)
+            print(f"Timing columns changed; previous log moved to {old_path}")
+    except OSError as exc:
+        print(f"Could not prepare {TIMING_CSV_PATH.resolve()}: {exc}")
+        return
+    append_csv_row(header, TIMING_CSV_PATH)
+
+
+def timing_csv_header():
+    return ["timestamp", "frames", "fps", "width", "height"] + [
+        f"{key}_ms" for key, _ in PROFILE_STAGES
+    ]
 
 
 def decode_message_to_frame(msg):
@@ -600,6 +627,19 @@ class StageProfiler:
             lines.append(f"  {label:<32}{avg_ms:8.1f}{ran_on}")
         print("\n".join(lines), flush=True)
 
+        # Same numbers as one csv row; empty when a step did not run
+        row = [
+            datetime.now().isoformat(timespec="seconds"),
+            self.frames,
+            round(fps, 2),
+            w,
+            h,
+        ]
+        for key, _ in PROFILE_STAGES:
+            count = self.counts.get(key, 0)
+            row.append(round(self.totals[key] / count, 2) if count else "")
+        append_csv_row(row, TIMING_CSV_PATH)
+
 
 def restart_process(reason):
     print(f"Restarting process: {reason}", flush=True)
@@ -640,6 +680,7 @@ async def receive_and_infer():
         f"Loaded models: {', '.join(MODEL_ORDER)}. Default model: {DEFAULT_MODEL_NAME}"
     )
     ensure_csv_header()
+    ensure_timing_csv_header()
 
     heartbeat_task = asyncio.create_task(heartbeat())  # noqa: F841 (keep a reference)
     start_watchdog()
